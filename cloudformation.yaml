@@ -1,0 +1,251 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Bryant Energy Data Collector - Lambda function, DynamoDB table, and API Gateway'
+
+Parameters:
+  CarrierUsername:
+    Type: String
+    Description: Carrier/Bryant username (email)
+    NoEcho: true
+  
+  CarrierPassword:
+    Type: String
+    Description: Carrier/Bryant password
+    NoEcho: true
+  
+  CarrierSerial:
+    Type: String
+    Description: Carrier system serial number
+    Default: '4022W200213'
+
+Resources:
+  # DynamoDB Table
+  EnergyDataTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: bryant-energy-data
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: date
+          AttributeType: S
+      KeySchema:
+        - AttributeName: date
+          KeyType: HASH
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: false
+      Tags:
+        - Key: Project
+          Value: bryantDataCollector
+
+  # IAM Role for Data Collection Lambda
+  DataCollectionLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: bryantDataCollector-LambdaRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBWriteAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                Resource: !GetAtt EnergyDataTable.Arn
+
+  # IAM Role for API Lambda
+  ApiLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: bryantDataCollector-ApiLambdaRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBReadAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:Scan
+                  - dynamodb:Query
+                Resource: !GetAtt EnergyDataTable.Arn
+
+  # Data Collection Lambda Function
+  DataCollectionLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: bryantDataCollector-collectEnergy
+      Runtime: python3.12
+      Handler: lambda_collect_energy.lambda_handler
+      Role: !GetAtt DataCollectionLambdaRole.Arn
+      Timeout: 60
+      MemorySize: 256
+      Environment:
+        Variables:
+          CARRIER_USERNAME: !Ref CarrierUsername
+          CARRIER_PASSWORD: !Ref CarrierPassword
+          CARRIER_SERIAL: !Ref CarrierSerial
+          DYNAMODB_TABLE_NAME: !Ref EnergyDataTable
+      Code:
+        ZipFile: |
+          # Placeholder - will be replaced during deployment
+          def lambda_handler(event, context):
+              return {'statusCode': 200, 'body': 'Deploy package required'}
+
+  # API Lambda Function
+  ApiLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: bryantDataCollector-api
+      Runtime: python3.12
+      Handler: lambda_api.lambda_handler
+      Role: !GetAtt ApiLambdaRole.Arn
+      Timeout: 30
+      MemorySize: 128
+      Environment:
+        Variables:
+          DYNAMODB_TABLE_NAME: !Ref EnergyDataTable
+      Code:
+        ZipFile: |
+          # Placeholder - will be replaced during deployment
+          def lambda_handler(event, context):
+              return {'statusCode': 200, 'body': 'Deploy package required'}
+
+  # EventBridge Rule for Daily Schedule
+  DailyScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: bryantDataCollector-dailySchedule
+      Description: Daily schedule to collect energy data at 8 AM
+      ScheduleExpression: cron(0 8 * * ? *)
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt DataCollectionLambda.Arn
+          Id: DataCollectionTarget
+
+  # Permission for EventBridge to invoke Lambda
+  DataCollectionLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref DataCollectionLambda
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt DailyScheduleRule.Arn
+
+  # API Gateway REST API
+  ApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: bryantDataCollector-api
+      Description: API for querying energy data
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  # API Gateway Resource for /data
+  ApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: data
+
+  # API Gateway Method for GET /data
+  ApiMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref ApiResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ApiLambda.Arn}/invocations'
+
+  # API Gateway Method for OPTIONS (CORS)
+  ApiOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref ApiResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Headers: true
+
+  # API Gateway Deployment
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - ApiMethod
+      - ApiOptionsMethod
+    Properties:
+      RestApiId: !Ref ApiGateway
+      StageName: prod
+
+  # Permission for API Gateway to invoke Lambda
+  ApiLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ApiLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/*'
+
+Outputs:
+  DynamoDBTableName:
+    Description: Name of the DynamoDB table
+    Value: !Ref EnergyDataTable
+    Export:
+      Name: !Sub '${AWS::StackName}-TableName'
+
+  DataCollectionLambdaArn:
+    Description: ARN of the data collection Lambda function
+    Value: !GetAtt DataCollectionLambda.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-DataCollectionLambdaArn'
+
+  ApiLambdaArn:
+    Description: ARN of the API Lambda function
+    Value: !GetAtt ApiLambda.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiLambdaArn'
+
+  ApiGatewayUrl:
+    Description: API Gateway endpoint URL
+    Value: !Sub 'https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod/data'
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiUrl'
+

@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bryant Energy Data Dashboard</title>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .controls {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .controls label {
+            font-weight: 500;
+            color: #555;
+        }
+
+        .controls input {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        .controls button {
+            padding: 10px 20px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: background 0.3s;
+        }
+
+        .controls button:hover {
+            background: #5568d3;
+        }
+
+        .controls button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .status {
+            background: white;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            display: none;
+        }
+
+        .status.error {
+            background: #fee;
+            border-left: 4px solid #e74c3c;
+        }
+
+        .status.success {
+            background: #efe;
+            border-left: 4px solid #27ae60;
+        }
+
+        .status.info {
+            background: #eef;
+            border-left: 4px solid #3498db;
+        }
+
+        .chart-container {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .chart-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 15px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 5px;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        @media (max-width: 768px) {
+            .controls {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .controls > * {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🏠 Bryant Energy Data Dashboard</h1>
+            <p class="subtitle">HVAC Energy Usage Visualization</p>
+        </div>
+
+        <div class="status" id="status"></div>
+
+        <div class="controls">
+            <label for="apiUrl">API URL:</label>
+            <input type="text" id="apiUrl" placeholder="https://your-api.execute-api.us-east-1.amazonaws.com/prod/data" style="flex: 1; min-width: 300px;">
+            <label for="startDate">Start Date:</label>
+            <input type="date" id="startDate">
+            <label for="endDate">End Date:</label>
+            <input type="date" id="endDate">
+            <button onclick="loadData()">Load Data</button>
+        </div>
+
+        <div class="stats-grid" id="statsGrid"></div>
+
+        <div class="chart-container">
+            <div class="chart-title">Daily Energy Usage (kWh)</div>
+            <div id="energyChart" style="height: 400px;"></div>
+        </div>
+
+        <div class="chart-container">
+            <div class="chart-title">Daily Energy Costs ($)</div>
+            <div id="costChart" style="height: 400px;"></div>
+        </div>
+
+        <div class="chart-container">
+            <div class="chart-title">Energy Breakdown by Type</div>
+            <div id="breakdownChart" style="height: 400px;"></div>
+        </div>
+    </div>
+
+    <script>
+        let currentData = [];
+
+        // Set default date range (last 30 days)
+        function setDefaultDates() {
+            const endDate = new Date();
+            const startDate = new Date();
+            startDate.setDate(startDate.getDate() - 30);
+
+            document.getElementById('startDate').value = startDate.toISOString().split('T')[0];
+            document.getElementById('endDate').value = endDate.toISOString().split('T')[0];
+        }
+
+        function showStatus(message, type = 'info') {
+            const statusEl = document.getElementById('status');
+            statusEl.textContent = message;
+            statusEl.className = `status ${type}`;
+            statusEl.style.display = 'block';
+            setTimeout(() => {
+                statusEl.style.display = 'none';
+            }, 5000);
+        }
+
+        async function loadData() {
+            const apiUrl = document.getElementById('apiUrl').value.trim();
+            const startDate = document.getElementById('startDate').value;
+            const endDate = document.getElementById('endDate').value;
+
+            if (!apiUrl) {
+                showStatus('Please enter an API URL', 'error');
+                return;
+            }
+
+            try {
+                showStatus('Loading data...', 'info');
+                
+                let url = apiUrl;
+                if (startDate && endDate) {
+                    url += `?start_date=${startDate}&end_date=${endDate}`;
+                }
+
+                const response = await fetch(url);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                
+                // Handle both array and object responses
+                if (Array.isArray(data)) {
+                    currentData = data;
+                } else if (data.items) {
+                    currentData = data.items;
+                } else {
+                    currentData = [data];
+                }
+
+                // Sort by date
+                currentData.sort((a, b) => {
+                    const dateA = new Date(a.date);
+                    const dateB = new Date(b.date);
+                    return dateA - dateB;
+                });
+
+                showStatus(`Loaded ${currentData.length} data points`, 'success');
+                updateCharts();
+                updateStats();
+
+            } catch (error) {
+                console.error('Error loading data:', error);
+                showStatus(`Error loading data: ${error.message}`, 'error');
+            }
+        }
+
+        function updateStats() {
+            if (currentData.length === 0) return;
+
+            const stats = calculateStats();
+            const statsGrid = document.getElementById('statsGrid');
+            
+            statsGrid.innerHTML = `
+                <div class="stat-card">
+                    <div class="stat-label">Total kWh</div>
+                    <div class="stat-value">${stats.totalKwh.toFixed(1)}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Total Cost</div>
+                    <div class="stat-value">$${stats.totalCost.toFixed(2)}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Avg Daily kWh</div>
+                    <div class="stat-value">${stats.avgKwh.toFixed(1)}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Avg Daily Cost</div>
+                    <div class="stat-value">$${stats.avgCost.toFixed(2)}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Data Points</div>
+                    <div class="stat-value">${currentData.length}</div>
+                </div>
+            `;
+        }
+
+        function calculateStats() {
+            let totalKwh = 0;
+            let totalCost = 0;
+
+            currentData.forEach(item => {
+                const kwh = (item.eHeatKwh || 0) + (item.coolingKwh || 0) + 
+                           (item.fanKwh || 0) + (item.hPHeatKwh || 0) + 
+                           (item.loopPumpKwh || 0) + (item.gasKwh || 0) + 
+                           (item.reheatKwh || 0);
+                
+                const cost = (item.eHeatDollars || 0) + (item.coolingDollars || 0) + 
+                            (item.fanDollars || 0) + (item.hPHeatDollars || 0) + 
+                            (item.loopPumpDollars || 0) + (item.gasDollars || 0) + 
+                            (item.reheatDollars || 0);
+
+                totalKwh += kwh;
+                totalCost += cost;
+            });
+
+            return {
+                totalKwh,
+                totalCost,
+                avgKwh: currentData.length > 0 ? totalKwh / currentData.length : 0,
+                avgCost: currentData.length > 0 ? totalCost / currentData.length : 0
+            };
+        }
+
+        function updateCharts() {
+            if (currentData.length === 0) {
+                document.getElementById('energyChart').innerHTML = '<div class="loading">No data to display</div>';
+                document.getElementById('costChart').innerHTML = '<div class="loading">No data to display</div>';
+                document.getElementById('breakdownChart').innerHTML = '<div class="loading">No data to display</div>';
+                return;
+            }
+
+            const dates = currentData.map(item => item.date);
+
+            // Energy Usage Chart
+            const energyTrace = {
+                x: dates,
+                y: currentData.map(item => 
+                    (item.eHeatKwh || 0) + (item.coolingKwh || 0) + 
+                    (item.fanKwh || 0) + (item.hPHeatKwh || 0) + 
+                    (item.loopPumpKwh || 0) + (item.gasKwh || 0) + 
+                    (item.reheatKwh || 0)
+                ),
+                type: 'scatter',
+                mode: 'lines+markers',
+                name: 'Total kWh',
+                line: { color: '#667eea', width: 2 },
+                marker: { size: 6 }
+            };
+
+            Plotly.newPlot('energyChart', [energyTrace], {
+                title: '',
+                xaxis: { title: 'Date' },
+                yaxis: { title: 'Energy Usage (kWh)' },
+                margin: { l: 60, r: 30, t: 30, b: 60 },
+                hovermode: 'closest'
+            });
+
+            // Cost Chart
+            const costTrace = {
+                x: dates,
+                y: currentData.map(item => 
+                    (item.eHeatDollars || 0) + (item.coolingDollars || 0) + 
+                    (item.fanDollars || 0) + (item.hPHeatDollars || 0) + 
+                    (item.loopPumpDollars || 0) + (item.gasDollars || 0) + 
+                    (item.reheatDollars || 0)
+                ),
+                type: 'scatter',
+                mode: 'lines+markers',
+                name: 'Total Cost',
+                line: { color: '#27ae60', width: 2 },
+                marker: { size: 6 }
+            };
+
+            Plotly.newPlot('costChart', [costTrace], {
+                title: '',
+                xaxis: { title: 'Date' },
+                yaxis: { title: 'Cost ($)' },
+                margin: { l: 60, r: 30, t: 30, b: 60 },
+                hovermode: 'closest'
+            });
+
+            // Breakdown Chart (stacked area)
+            const breakdownTraces = [
+                {
+                    x: dates,
+                    y: currentData.map(item => item.eHeatKwh || 0),
+                    name: 'E-Heat',
+                    type: 'scatter',
+                    mode: 'lines',
+                    stackgroup: 'one',
+                    fillcolor: '#3498db'
+                },
+                {
+                    x: dates,
+                    y: currentData.map(item => item.coolingKwh || 0),
+                    name: 'Cooling',
+                    type: 'scatter',
+                    mode: 'lines',
+                    stackgroup: 'one',
+                    fillcolor: '#2ecc71'
+                },
+                {
+                    x: dates,
+                    y: currentData.map(item => item.fanKwh || 0),
+                    name: 'Fan',
+                    type: 'scatter',
+                    mode: 'lines',
+                    stackgroup: 'one',
+                    fillcolor: '#f39c12'
+                },
+                {
+                    x: dates,
+                    y: currentData.map(item => item.hPHeatKwh || 0),
+                    name: 'HP Heat',
+                    type: 'scatter',
+                    mode: 'lines',
+                    stackgroup: 'one',
+                    fillcolor: '#e74c3c'
+                },
+                {
+                    x: dates,
+                    y: currentData.map(item => item.loopPumpKwh || 0),
+                    name: 'Loop Pump',
+                    type: 'scatter',
+                    mode: 'lines',
+                    stackgroup: 'one',
+                    fillcolor: '#9b59b6'
+                },
+                {
+                    x: dates,
+                    y: currentData.map(item => item.gasKwh || 0),
+                    name: 'Gas',
+                    type: 'scatter',
+                    mode: 'lines',
+                    stackgroup: 'one',
+                    fillcolor: '#34495e'
+                },
+                {
+                    x: dates,
+                    y: currentData.map(item => item.reheatKwh || 0),
+                    name: 'Reheat',
+                    type: 'scatter',
+                    mode: 'lines',
+                    stackgroup: 'one',
+                    fillcolor: '#1abc9c'
+                }
+            ];
+
+            Plotly.newPlot('breakdownChart', breakdownTraces, {
+                title: '',
+                xaxis: { title: 'Date' },
+                yaxis: { title: 'Energy Usage (kWh)' },
+                margin: { l: 60, r: 30, t: 30, b: 60 },
+                hovermode: 'closest'
+            });
+        }
+
+        // Initialize on page load
+        setDefaultDates();
+    </script>
+</body>
+</html>
+
