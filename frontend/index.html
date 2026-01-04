@@ -474,8 +474,43 @@
             });
         }
 
+        // Get URL parameters
+        function getUrlParams() {
+            const params = new URLSearchParams(window.location.search);
+            return {
+                apiUrl: params.get('apiUrl') || params.get('api') || params.get('url'),
+                startDate: params.get('startDate') || params.get('start'),
+                endDate: params.get('endDate') || params.get('end'),
+                autoLoad: params.get('autoLoad') !== 'false' // default true if apiUrl present
+            };
+        }
+
         // Initialize on page load
-        setDefaultDates();
+        function init() {
+            setDefaultDates();
+            
+            const params = getUrlParams();
+            
+            // Set API URL from parameter
+            if (params.apiUrl) {
+                document.getElementById('apiUrl').value = params.apiUrl;
+            }
+            
+            // Override dates if provided in URL
+            if (params.startDate) {
+                document.getElementById('startDate').value = params.startDate;
+            }
+            if (params.endDate) {
+                document.getElementById('endDate').value = params.endDate;
+            }
+            
+            // Auto-load data if API URL was provided
+            if (params.apiUrl && params.autoLoad) {
+                loadData();
+            }
+        }
+
+        init();
     </script>
 </body>
 </html>
