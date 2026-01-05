@@ -207,6 +207,11 @@
             <div class="chart-title">Energy Breakdown by Type</div>
             <div id="breakdownChart" style="height: 400px;"></div>
         </div>
+
+        <div class="chart-container">
+            <div class="chart-title">📅 Last 30 Days Overview</div>
+            <div id="last30Chart" style="height: 450px;"></div>
+        </div>
     </div>
 
     <script>
@@ -345,6 +350,7 @@
                 document.getElementById('energyChart').innerHTML = '<div class="loading">No data to display</div>';
                 document.getElementById('costChart').innerHTML = '<div class="loading">No data to display</div>';
                 document.getElementById('breakdownChart').innerHTML = '<div class="loading">No data to display</div>';
+                document.getElementById('last30Chart').innerHTML = '<div class="loading">No data to display</div>';
                 return;
             }
 
@@ -471,6 +477,79 @@
                 yaxis: { title: 'Energy Usage (kWh)' },
                 margin: { l: 60, r: 30, t: 30, b: 60 },
                 hovermode: 'closest'
+            });
+
+            // Last 30 Days Chart - get most recent 30 data points
+            const last30Data = currentData.slice(-30);
+            const last30Dates = last30Data.map(item => item.date);
+            
+            const last30Energy = last30Data.map(item => 
+                (item.eHeatKwh || 0) + (item.coolingKwh || 0) + 
+                (item.fanKwh || 0) + (item.hPHeatKwh || 0) + 
+                (item.loopPumpKwh || 0) + (item.gasKwh || 0) + 
+                (item.reheatKwh || 0)
+            );
+            
+            const last30Cost = last30Data.map(item => 
+                (item.eHeatDollars || 0) + (item.coolingDollars || 0) + 
+                (item.fanDollars || 0) + (item.hPHeatDollars || 0) + 
+                (item.loopPumpDollars || 0) + (item.gasDollars || 0) + 
+                (item.reheatDollars || 0)
+            );
+
+            const last30EnergyTrace = {
+                x: last30Dates,
+                y: last30Energy,
+                name: 'Energy (kWh)',
+                type: 'bar',
+                marker: { 
+                    color: '#667eea',
+                    line: { color: '#5568d3', width: 1 }
+                },
+                yaxis: 'y'
+            };
+
+            const last30CostTrace = {
+                x: last30Dates,
+                y: last30Cost,
+                name: 'Cost ($)',
+                type: 'bar',
+                marker: { 
+                    color: '#27ae60',
+                    line: { color: '#1e8449', width: 1 }
+                },
+                yaxis: 'y2'
+            };
+
+            Plotly.newPlot('last30Chart', [last30EnergyTrace, last30CostTrace], {
+                title: '',
+                xaxis: { 
+                    title: 'Date',
+                    tickangle: -45,
+                    tickfont: { size: 10 }
+                },
+                yaxis: { 
+                    title: 'Energy (kWh)',
+                    titlefont: { color: '#667eea' },
+                    tickfont: { color: '#667eea' },
+                    side: 'left'
+                },
+                yaxis2: {
+                    title: 'Cost ($)',
+                    titlefont: { color: '#27ae60' },
+                    tickfont: { color: '#27ae60' },
+                    overlaying: 'y',
+                    side: 'right'
+                },
+                barmode: 'group',
+                margin: { l: 60, r: 60, t: 30, b: 100 },
+                hovermode: 'closest',
+                legend: {
+                    x: 0.5,
+                    y: 1.1,
+                    xanchor: 'center',
+                    orientation: 'h'
+                }
             });
         }
 
