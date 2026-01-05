@@ -160,6 +160,61 @@
             color: #666;
         }
 
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+
+        .data-table th {
+            background: #667eea;
+            color: white;
+            padding: 10px 8px;
+            text-align: right;
+            font-weight: 600;
+            position: sticky;
+            top: 0;
+            white-space: nowrap;
+        }
+
+        .data-table th:first-child {
+            text-align: left;
+        }
+
+        .data-table td {
+            padding: 8px;
+            border-bottom: 1px solid #eee;
+            text-align: right;
+            font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+        }
+
+        .data-table td:first-child {
+            text-align: left;
+            font-weight: 500;
+            color: #333;
+        }
+
+        .data-table tr:hover {
+            background: #f8f9ff;
+        }
+
+        .data-table tr:nth-child(even) {
+            background: #fafafa;
+        }
+
+        .data-table tr:nth-child(even):hover {
+            background: #f0f2ff;
+        }
+
+        .data-table .total-row {
+            background: #f0f0f0 !important;
+            font-weight: 600;
+        }
+
+        .data-table .total-row td {
+            border-top: 2px solid #667eea;
+        }
+
         @media (max-width: 768px) {
             .controls {
                 flex-direction: column;
@@ -209,8 +264,8 @@
         </div>
 
         <div class="chart-container">
-            <div class="chart-title">📅 Last 30 Days Overview</div>
-            <div id="last30Chart" style="height: 450px;"></div>
+            <div class="chart-title">📅 Last 30 Days Data</div>
+            <div id="dataTable" style="overflow-x: auto;"></div>
         </div>
     </div>
 
@@ -350,7 +405,7 @@
                 document.getElementById('energyChart').innerHTML = '<div class="loading">No data to display</div>';
                 document.getElementById('costChart').innerHTML = '<div class="loading">No data to display</div>';
                 document.getElementById('breakdownChart').innerHTML = '<div class="loading">No data to display</div>';
-                document.getElementById('last30Chart').innerHTML = '<div class="loading">No data to display</div>';
+                document.getElementById('dataTable').innerHTML = '<div class="loading">No data to display</div>';
                 return;
             }
 
@@ -479,78 +534,98 @@
                 hovermode: 'closest'
             });
 
-            // Last 30 Days Chart - get most recent 30 data points
-            const last30Data = currentData.slice(-30);
-            const last30Dates = last30Data.map(item => item.date);
+            // Last 30 Days Data Table - get most recent 30 data points
+            const last30Data = currentData.slice(-30).reverse(); // Most recent first
             
-            const last30Energy = last30Data.map(item => 
-                (item.eHeatKwh || 0) + (item.coolingKwh || 0) + 
-                (item.fanKwh || 0) + (item.hPHeatKwh || 0) + 
-                (item.loopPumpKwh || 0) + (item.gasKwh || 0) + 
-                (item.reheatKwh || 0)
-            );
+            // Calculate totals
+            const totals = {
+                eHeatKwh: 0, coolingKwh: 0, fanKwh: 0, hPHeatKwh: 0, loopPumpKwh: 0, gasKwh: 0, reheatKwh: 0,
+                eHeatDollars: 0, coolingDollars: 0, fanDollars: 0, hPHeatDollars: 0, loopPumpDollars: 0, gasDollars: 0, reheatDollars: 0
+            };
             
-            const last30Cost = last30Data.map(item => 
-                (item.eHeatDollars || 0) + (item.coolingDollars || 0) + 
-                (item.fanDollars || 0) + (item.hPHeatDollars || 0) + 
-                (item.loopPumpDollars || 0) + (item.gasDollars || 0) + 
-                (item.reheatDollars || 0)
-            );
-
-            const last30EnergyTrace = {
-                x: last30Dates,
-                y: last30Energy,
-                name: 'Energy (kWh)',
-                type: 'bar',
-                marker: { 
-                    color: '#667eea',
-                    line: { color: '#5568d3', width: 1 }
-                },
-                yaxis: 'y'
-            };
-
-            const last30CostTrace = {
-                x: last30Dates,
-                y: last30Cost,
-                name: 'Cost ($)',
-                type: 'bar',
-                marker: { 
-                    color: '#27ae60',
-                    line: { color: '#1e8449', width: 1 }
-                },
-                yaxis: 'y2'
-            };
-
-            Plotly.newPlot('last30Chart', [last30EnergyTrace, last30CostTrace], {
-                title: '',
-                xaxis: { 
-                    title: 'Date',
-                    tickangle: -45,
-                    tickfont: { size: 10 }
-                },
-                yaxis: { 
-                    title: 'Energy (kWh)',
-                    titlefont: { color: '#667eea' },
-                    tickfont: { color: '#667eea' },
-                    side: 'left'
-                },
-                yaxis2: {
-                    title: 'Cost ($)',
-                    titlefont: { color: '#27ae60' },
-                    tickfont: { color: '#27ae60' },
-                    overlaying: 'y',
-                    side: 'right'
-                },
-                barmode: 'group',
-                margin: { l: 60, r: 60, t: 30, b: 100 },
-                hovermode: 'closest',
-                legend: {
-                    x: 0.5,
-                    y: 1.1,
-                    xanchor: 'center',
-                    orientation: 'h'
-                }
+            last30Data.forEach(item => {
+                totals.eHeatKwh += item.eHeatKwh || 0;
+                totals.coolingKwh += item.coolingKwh || 0;
+                totals.fanKwh += item.fanKwh || 0;
+                totals.hPHeatKwh += item.hPHeatKwh || 0;
+                totals.loopPumpKwh += item.loopPumpKwh || 0;
+                totals.gasKwh += item.gasKwh || 0;
+                totals.reheatKwh += item.reheatKwh || 0;
+                totals.eHeatDollars += item.eHeatDollars || 0;
+                totals.coolingDollars += item.coolingDollars || 0;
+                totals.fanDollars += item.fanDollars || 0;
+                totals.hPHeatDollars += item.hPHeatDollars || 0;
+                totals.loopPumpDollars += item.loopPumpDollars || 0;
+                totals.gasDollars += item.gasDollars || 0;
+                totals.reheatDollars += item.reheatDollars || 0;
             });
+
+            let tableHtml = `
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>E-Heat kWh</th>
+                            <th>E-Heat $</th>
+                            <th>Cooling kWh</th>
+                            <th>Cooling $</th>
+                            <th>Fan kWh</th>
+                            <th>Fan $</th>
+                            <th>HP Heat kWh</th>
+                            <th>HP Heat $</th>
+                            <th>Loop Pump kWh</th>
+                            <th>Loop Pump $</th>
+                            <th>Gas kWh</th>
+                            <th>Gas $</th>
+                            <th>Reheat kWh</th>
+                            <th>Reheat $</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr class="total-row">
+                            <td><strong>TOTAL</strong></td>
+                            <td>${totals.eHeatKwh.toFixed(2)}</td>
+                            <td>$${totals.eHeatDollars.toFixed(2)}</td>
+                            <td>${totals.coolingKwh.toFixed(2)}</td>
+                            <td>$${totals.coolingDollars.toFixed(2)}</td>
+                            <td>${totals.fanKwh.toFixed(2)}</td>
+                            <td>$${totals.fanDollars.toFixed(2)}</td>
+                            <td>${totals.hPHeatKwh.toFixed(2)}</td>
+                            <td>$${totals.hPHeatDollars.toFixed(2)}</td>
+                            <td>${totals.loopPumpKwh.toFixed(2)}</td>
+                            <td>$${totals.loopPumpDollars.toFixed(2)}</td>
+                            <td>${totals.gasKwh.toFixed(2)}</td>
+                            <td>$${totals.gasDollars.toFixed(2)}</td>
+                            <td>${totals.reheatKwh.toFixed(2)}</td>
+                            <td>$${totals.reheatDollars.toFixed(2)}</td>
+                        </tr>`;
+            
+            last30Data.forEach(item => {
+                tableHtml += `
+                        <tr>
+                            <td>${item.date}</td>
+                            <td>${(item.eHeatKwh || 0).toFixed(2)}</td>
+                            <td>$${(item.eHeatDollars || 0).toFixed(2)}</td>
+                            <td>${(item.coolingKwh || 0).toFixed(2)}</td>
+                            <td>$${(item.coolingDollars || 0).toFixed(2)}</td>
+                            <td>${(item.fanKwh || 0).toFixed(2)}</td>
+                            <td>$${(item.fanDollars || 0).toFixed(2)}</td>
+                            <td>${(item.hPHeatKwh || 0).toFixed(2)}</td>
+                            <td>$${(item.hPHeatDollars || 0).toFixed(2)}</td>
+                            <td>${(item.loopPumpKwh || 0).toFixed(2)}</td>
+                            <td>$${(item.loopPumpDollars || 0).toFixed(2)}</td>
+                            <td>${(item.gasKwh || 0).toFixed(2)}</td>
+                            <td>$${(item.gasDollars || 0).toFixed(2)}</td>
+                            <td>${(item.reheatKwh || 0).toFixed(2)}</td>
+                            <td>$${(item.reheatDollars || 0).toFixed(2)}</td>
+                        </tr>`;
+            });
+            
+            tableHtml += `
+                    </tbody>
+                </table>`;
+            
+            document.getElementById('dataTable').innerHTML = tableHtml;
         }
 
         // Get URL parameters
