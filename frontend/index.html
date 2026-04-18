@@ -246,6 +246,13 @@
             <button onclick="loadData()">Load Data</button>
         </div>
 
+        <div class="controls" style="background: #fff8f0; border-left: 4px solid #e67e22;">
+            <label style="font-weight: 600; color: #e67e22; white-space: nowrap;">LG&amp;E MyMeter:</label>
+            <input type="file" id="lgeFile" accept=".csv,.xml" onchange="loadLGEFile(this.files[0])" style="cursor: pointer;">
+            <span id="lgeStatus" style="color: #888; font-size: 13px; font-style: italic;">Upload a Usage.csv or GreenButton.xml to overlay utility data</span>
+            <button onclick="clearLGEData()" id="clearLgeBtn" style="display:none; background: #e74c3c;">Clear LG&amp;E Data</button>
+        </div>
+
         <div class="stats-grid" id="statsGrid"></div>
 
         <div class="chart-container">
@@ -267,10 +274,26 @@
             <div class="chart-title">📅 Last 30 Days Data</div>
             <div id="dataTable" style="overflow-x: auto;"></div>
         </div>
+
+        <div class="chart-container" id="lgeComparisonContainer" style="display:none;">
+            <div class="chart-title">⚡ HVAC vs Total Usage (kWh) — Overlapping Dates</div>
+            <div id="hvacComparisonChart" style="height: 400px;"></div>
+        </div>
+
+        <div class="chart-container" id="lgeCostContainer" style="display:none;">
+            <div class="chart-title">💰 HVAC vs Total Cost ($) — Overlapping Dates</div>
+            <div id="costComparisonChart" style="height: 400px;"></div>
+        </div>
+
+        <div class="chart-container" id="lgeTableContainer" style="display:none;">
+            <div class="chart-title">📊 LG&amp;E vs HVAC Daily Comparison</div>
+            <div id="lgeComparisonTable" style="overflow-x: auto;"></div>
+        </div>
     </div>
 
     <script>
         let currentData = [];
+        let lgeData = []; // [{date: 'YYYY-MM-DD', kWh: X, dollars: Y}]
 
         // Set default date range (last 30 days)
         function setDefaultDates() {
@@ -348,22 +371,22 @@
 
             const stats = calculateStats();
             const statsGrid = document.getElementById('statsGrid');
-            
-            statsGrid.innerHTML = `
+
+            let html = `
                 <div class="stat-card">
-                    <div class="stat-label">Total kWh</div>
+                    <div class="stat-label">HVAC Total kWh</div>
                     <div class="stat-value">${stats.totalKwh.toFixed(1)}</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-label">Total Cost</div>
+                    <div class="stat-label">HVAC Total Cost</div>
                     <div class="stat-value">$${stats.totalCost.toFixed(2)}</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-label">Avg Daily kWh</div>
+                    <div class="stat-label">HVAC Avg Daily kWh</div>
                     <div class="stat-value">${stats.avgKwh.toFixed(1)}</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-label">Avg Daily Cost</div>
+                    <div class="stat-label">HVAC Avg Daily Cost</div>
                     <div class="stat-value">$${stats.avgCost.toFixed(2)}</div>
                 </div>
                 <div class="stat-card">
@@ -371,6 +394,36 @@
                     <div class="stat-value">${currentData.length}</div>
                 </div>
             `;
+
+            if (lgeData.length > 0) {
+                const lgeStats = calculateLGEStats();
+                if (lgeStats && lgeStats.overlapCount > 0) {
+                    html += `
+                        <div class="stat-card" style="border-top: 3px solid #e67e22;">
+                            <div class="stat-label">LG&amp;E Total kWh (${lgeStats.overlapCount} days)</div>
+                            <div class="stat-value" style="color: #e67e22;">${lgeStats.lgeKwh.toFixed(1)}</div>
+                        </div>
+                        <div class="stat-card" style="border-top: 3px solid #e67e22;">
+                            <div class="stat-label">LG&amp;E Total Cost</div>
+                            <div class="stat-value" style="color: #e67e22;">$${lgeStats.lgeCost.toFixed(2)}</div>
+                        </div>
+                        <div class="stat-card" style="border-top: 3px solid #667eea;">
+                            <div class="stat-label">HVAC % of Total kWh</div>
+                            <div class="stat-value">${lgeStats.hvacPct.toFixed(1)}%</div>
+                        </div>
+                        <div class="stat-card" style="border-top: 3px solid #95a5a6;">
+                            <div class="stat-label">Non-HVAC kWh</div>
+                            <div class="stat-value" style="color: #7f8c8d;">${lgeStats.nonHvacKwh.toFixed(1)}</div>
+                        </div>
+                        <div class="stat-card" style="border-top: 3px solid #95a5a6;">
+                            <div class="stat-label">Non-HVAC Cost</div>
+                            <div class="stat-value" style="color: #7f8c8d;">$${lgeStats.nonHvacCost.toFixed(2)}</div>
+                        </div>
+                    `;
+                }
+            }
+
+            statsGrid.innerHTML = html;
         }
 
         function calculateStats() {
@@ -406,6 +459,9 @@
                 document.getElementById('costChart').innerHTML = '<div class="loading">No data to display</div>';
                 document.getElementById('breakdownChart').innerHTML = '<div class="loading">No data to display</div>';
                 document.getElementById('dataTable').innerHTML = '<div class="loading">No data to display</div>';
+                document.getElementById('lgeComparisonContainer').style.display = 'none';
+                document.getElementById('lgeCostContainer').style.display = 'none';
+                document.getElementById('lgeTableContainer').style.display = 'none';
                 return;
             }
 
@@ -427,7 +483,19 @@
                 marker: { size: 6 }
             };
 
-            Plotly.newPlot('energyChart', [energyTrace], {
+            const energyChartTraces = [energyTrace];
+            if (lgeData.length > 0) {
+                energyChartTraces.push({
+                    x: lgeData.map(d => d.date),
+                    y: lgeData.map(d => d.kWh),
+                    type: 'scatter',
+                    mode: 'lines+markers',
+                    name: 'LG&E Total kWh',
+                    line: { color: '#e67e22', width: 2 },
+                    marker: { size: 6 }
+                });
+            }
+            Plotly.newPlot('energyChart', energyChartTraces, {
                 title: '',
                 xaxis: { title: 'Date' },
                 yaxis: { title: 'Energy Usage (kWh)' },
@@ -451,7 +519,19 @@
                 marker: { size: 6 }
             };
 
-            Plotly.newPlot('costChart', [costTrace], {
+            const costChartTraces = [costTrace];
+            if (lgeData.length > 0) {
+                costChartTraces.push({
+                    x: lgeData.map(d => d.date),
+                    y: lgeData.map(d => d.dollars || 0),
+                    type: 'scatter',
+                    mode: 'lines+markers',
+                    name: 'LG&E Total Cost',
+                    line: { color: '#e67e22', width: 2 },
+                    marker: { size: 6 }
+                });
+            }
+            Plotly.newPlot('costChart', costChartTraces, {
                 title: '',
                 xaxis: { title: 'Date' },
                 yaxis: { title: 'Cost ($)' },
@@ -626,7 +706,268 @@
                 </table>`;
             
             document.getElementById('dataTable').innerHTML = tableHtml;
+
+            // LG&E comparison charts and table (only for overlapping dates)
+            if (lgeData.length > 0) {
+                const lgeMap = {};
+                lgeData.forEach(d => { lgeMap[d.date] = d; });
+
+                const overlapDates = [];
+                const hvacKwhArr = [], nonHvacKwhArr = [];
+                const hvacCostArr = [], nonHvacCostArr = [];
+                const overlapRows = [];
+
+                // Iterate chronologically for charts, reverse for table
+                currentData.forEach(item => {
+                    if (!lgeMap[item.date]) return;
+                    const hvacKwh = (item.eHeatKwh || 0) + (item.coolingKwh || 0) +
+                        (item.fanKwh || 0) + (item.hPHeatKwh || 0) +
+                        (item.loopPumpKwh || 0) + (item.gasKwh || 0) + (item.reheatKwh || 0);
+                    const hvacCost = (item.eHeatDollars || 0) + (item.coolingDollars || 0) +
+                        (item.fanDollars || 0) + (item.hPHeatDollars || 0) +
+                        (item.loopPumpDollars || 0) + (item.gasDollars || 0) + (item.reheatDollars || 0);
+                    const lgeKwh = lgeMap[item.date].kWh;
+                    const lgeCost = lgeMap[item.date].dollars || 0;
+                    const nonHvacKwh = Math.max(0, lgeKwh - hvacKwh);
+                    const nonHvacCost = Math.max(0, lgeCost - hvacCost);
+
+                    overlapDates.push(item.date);
+                    hvacKwhArr.push(hvacKwh);
+                    nonHvacKwhArr.push(nonHvacKwh);
+                    hvacCostArr.push(hvacCost);
+                    nonHvacCostArr.push(nonHvacCost);
+                    overlapRows.push({ date: item.date, hvacKwh, hvacCost, lgeKwh, lgeCost, nonHvacKwh, nonHvacCost });
+                });
+
+                if (overlapDates.length > 0) {
+                    document.getElementById('lgeComparisonContainer').style.display = '';
+                    document.getElementById('lgeCostContainer').style.display = '';
+                    document.getElementById('lgeTableContainer').style.display = '';
+
+                    Plotly.newPlot('hvacComparisonChart', [
+                        { x: overlapDates, y: hvacKwhArr, name: 'HVAC kWh', type: 'bar', marker: { color: '#667eea' } },
+                        { x: overlapDates, y: nonHvacKwhArr, name: 'Non-HVAC kWh', type: 'bar', marker: { color: '#bdc3c7' } }
+                    ], {
+                        barmode: 'stack',
+                        xaxis: { title: 'Date' },
+                        yaxis: { title: 'Energy Usage (kWh)' },
+                        margin: { l: 60, r: 30, t: 30, b: 60 },
+                        hovermode: 'closest'
+                    });
+
+                    Plotly.newPlot('costComparisonChart', [
+                        { x: overlapDates, y: hvacCostArr, name: 'HVAC Cost', type: 'bar', marker: { color: '#27ae60' } },
+                        { x: overlapDates, y: nonHvacCostArr, name: 'Non-HVAC Cost', type: 'bar', marker: { color: '#bdc3c7' } }
+                    ], {
+                        barmode: 'stack',
+                        xaxis: { title: 'Date' },
+                        yaxis: { title: 'Cost ($)' },
+                        margin: { l: 60, r: 30, t: 30, b: 60 },
+                        hovermode: 'closest'
+                    });
+
+                    // Comparison table — most recent first
+                    const cmpRows = [...overlapRows].reverse();
+                    const cmpTotals = cmpRows.reduce((t, r) => {
+                        t.hvacKwh += r.hvacKwh; t.hvacCost += r.hvacCost;
+                        t.lgeKwh += r.lgeKwh; t.lgeCost += r.lgeCost;
+                        t.nonHvacKwh += r.nonHvacKwh; t.nonHvacCost += r.nonHvacCost;
+                        return t;
+                    }, { hvacKwh: 0, hvacCost: 0, lgeKwh: 0, lgeCost: 0, nonHvacKwh: 0, nonHvacCost: 0 });
+                    const cmpTotalPct = cmpTotals.lgeKwh > 0 ? (cmpTotals.hvacKwh / cmpTotals.lgeKwh * 100) : 0;
+
+                    let cmpHtml = `<table class="data-table">
+                        <thead><tr>
+                            <th>Date</th>
+                            <th>HVAC kWh</th><th>HVAC $</th>
+                            <th>LG&amp;E Total kWh</th><th>LG&amp;E Total $</th>
+                            <th>Non-HVAC kWh</th><th>Non-HVAC $</th>
+                            <th>HVAC %</th>
+                        </tr></thead>
+                        <tbody>
+                        <tr class="total-row">
+                            <td><strong>TOTAL</strong></td>
+                            <td>${cmpTotals.hvacKwh.toFixed(1)}</td><td>$${cmpTotals.hvacCost.toFixed(2)}</td>
+                            <td>${cmpTotals.lgeKwh.toFixed(1)}</td><td>$${cmpTotals.lgeCost.toFixed(2)}</td>
+                            <td>${cmpTotals.nonHvacKwh.toFixed(1)}</td><td>$${cmpTotals.nonHvacCost.toFixed(2)}</td>
+                            <td>${cmpTotalPct.toFixed(1)}%</td>
+                        </tr>`;
+                    cmpRows.forEach(r => {
+                        const pct = r.lgeKwh > 0 ? (r.hvacKwh / r.lgeKwh * 100).toFixed(1) : '—';
+                        cmpHtml += `<tr>
+                            <td>${r.date}</td>
+                            <td>${r.hvacKwh.toFixed(1)}</td><td>$${r.hvacCost.toFixed(2)}</td>
+                            <td>${r.lgeKwh.toFixed(1)}</td><td>$${r.lgeCost.toFixed(2)}</td>
+                            <td>${r.nonHvacKwh.toFixed(1)}</td><td>$${r.nonHvacCost.toFixed(2)}</td>
+                            <td>${pct}%</td>
+                        </tr>`;
+                    });
+                    cmpHtml += '</tbody></table>';
+                    document.getElementById('lgeComparisonTable').innerHTML = cmpHtml;
+
+                } else {
+                    document.getElementById('lgeComparisonContainer').style.display = 'none';
+                    document.getElementById('lgeCostContainer').style.display = 'none';
+                    document.getElementById('lgeTableContainer').style.display = 'none';
+                }
+            } else {
+                document.getElementById('lgeComparisonContainer').style.display = 'none';
+                document.getElementById('lgeCostContainer').style.display = 'none';
+                document.getElementById('lgeTableContainer').style.display = 'none';
+            }
         }
+
+        // ── LG&E data loading ──────────────────────────────────────────
+
+        function loadLGEFile(file) {
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const text = e.target.result;
+                try {
+                    lgeData = file.name.toLowerCase().endsWith('.xml')
+                        ? parseLGEXml(text)
+                        : parseLGECsv(text);
+                    const statusEl = document.getElementById('lgeStatus');
+                    statusEl.textContent = `Loaded ${lgeData.length} LG&E daily records`;
+                    statusEl.style.color = '#27ae60';
+                    document.getElementById('clearLgeBtn').style.display = '';
+                    if (currentData.length > 0) { updateCharts(); updateStats(); }
+                } catch (err) {
+                    document.getElementById('lgeStatus').textContent = `Parse error: ${err.message}`;
+                    document.getElementById('lgeStatus').style.color = '#e74c3c';
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        function clearLGEData() {
+            lgeData = [];
+            document.getElementById('lgeFile').value = '';
+            const statusEl = document.getElementById('lgeStatus');
+            statusEl.textContent = 'Upload a Usage.csv or GreenButton.xml to overlay utility data';
+            statusEl.style.color = '#888';
+            document.getElementById('clearLgeBtn').style.display = 'none';
+            if (currentData.length > 0) { updateCharts(); updateStats(); }
+        }
+
+        // Parse a single CSV line respecting quoted fields
+        function parseCSVLine(line) {
+            const result = [];
+            let current = '';
+            let inQuotes = false;
+            for (let i = 0; i < line.length; i++) {
+                const c = line[i];
+                if (c === '"') { inQuotes = !inQuotes; }
+                else if (c === ',' && !inQuotes) { result.push(current); current = ''; }
+                else { current += c; }
+            }
+            result.push(current);
+            return result;
+        }
+
+        // Parse LG&E Usage.csv export
+        // Keeps only Meter #1308468 / Total Energy Charge / Delivered rows
+        function parseLGECsv(text) {
+            const lines = text.split('\n');
+            const data = {};
+            for (let i = 1; i < lines.length; i++) {
+                const line = lines[i].trim();
+                if (!line) continue;
+                const f = parseCSVLine(line);
+                if (f.length < 9) continue;
+                const [start, , , meter, , , direction, , kwh, dollars] = f;
+                if (!meter.includes('1308468') ||
+                    !meter.includes('Total Energy Charge') ||
+                    direction !== 'Delivered') continue;
+                // Date: "MM/DD/YYYY HH:MM:SS AM/PM" → YYYY-MM-DD
+                const datePart = start.trim().split(' ')[0];
+                const [m, d, y] = datePart.split('/');
+                const date = `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+                data[date] = {
+                    date,
+                    kWh: parseFloat(kwh),
+                    dollars: parseFloat((dollars || '0').replace('$', ''))
+                };
+            }
+            return Object.values(data).sort((a, b) => a.date.localeCompare(b.date));
+        }
+
+        // Parse LG&E GreenButton.xml (ESPI/Green Button format)
+        // Values are in Wh; no cost data available in XML.
+        // Only reads MeterReading/00121840 (delivered / Total Energy Charge).
+        function parseLGEXml(text) {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(text, 'text/xml');
+            const espiNs = 'http://naesb.org/espi';
+            const atomNs = 'http://www.w3.org/2005/Atom';
+
+            // Timezone offset from UTC in seconds (e.g. -18000 = EST/UTC-5)
+            const tzEls = doc.getElementsByTagNameNS(espiNs, 'tzOffset');
+            const tzOffset = tzEls.length > 0 ? parseInt(tzEls[0].textContent) : -18000;
+
+            const data = {};
+            const entries = doc.getElementsByTagNameNS(atomNs, 'entry');
+            for (const entry of entries) {
+                // Only process delivered readings (MeterReading/00121840)
+                const links = entry.getElementsByTagNameNS(atomNs, 'link');
+                let selfHref = '';
+                for (const link of links) {
+                    if (link.getAttribute('rel') === 'self') { selfHref = link.getAttribute('href') || ''; break; }
+                }
+                if (!selfHref.includes('MeterReading/00121840/IntervalBlock')) continue;
+
+                const readings = entry.getElementsByTagNameNS(espiNs, 'IntervalReading');
+                for (const reading of readings) {
+                    const tps = reading.getElementsByTagNameNS(espiNs, 'timePeriod');
+                    const vals = reading.getElementsByTagNameNS(espiNs, 'value');
+                    if (!tps.length || !vals.length) continue;
+                    const startEls = tps[0].getElementsByTagNameNS(espiNs, 'start');
+                    if (!startEls.length) continue;
+
+                    const unixTs = parseInt(startEls[0].textContent);
+                    const kwh = parseInt(vals[0].textContent) / 1000;
+
+                    // Convert UTC timestamp to local date using tzOffset
+                    // local midnight = unixTs (stored as local midnight in UTC terms)
+                    // Adjust: localDate = new Date((unixTs - tzOffset) * 1000), read as UTC
+                    const localMidnight = new Date((unixTs - tzOffset) * 1000);
+                    const dateStr = `${localMidnight.getUTCFullYear()}-${String(localMidnight.getUTCMonth() + 1).padStart(2, '0')}-${String(localMidnight.getUTCDate()).padStart(2, '0')}`;
+                    data[dateStr] = { date: dateStr, kWh: kwh, dollars: null };
+                }
+            }
+            return Object.values(data).sort((a, b) => a.date.localeCompare(b.date));
+        }
+
+        // Stats for the overlapping date range (Bryant ∩ LGE)
+        function calculateLGEStats() {
+            if (lgeData.length === 0 || currentData.length === 0) return null;
+            const lgeMap = {};
+            lgeData.forEach(d => { lgeMap[d.date] = d; });
+
+            let hvacKwh = 0, hvacCost = 0, lgeKwh = 0, lgeCost = 0, overlapCount = 0;
+            currentData.forEach(item => {
+                if (!lgeMap[item.date]) return;
+                overlapCount++;
+                hvacKwh += (item.eHeatKwh || 0) + (item.coolingKwh || 0) +
+                    (item.fanKwh || 0) + (item.hPHeatKwh || 0) +
+                    (item.loopPumpKwh || 0) + (item.gasKwh || 0) + (item.reheatKwh || 0);
+                hvacCost += (item.eHeatDollars || 0) + (item.coolingDollars || 0) +
+                    (item.fanDollars || 0) + (item.hPHeatDollars || 0) +
+                    (item.loopPumpDollars || 0) + (item.gasDollars || 0) + (item.reheatDollars || 0);
+                lgeKwh += lgeMap[item.date].kWh;
+                lgeCost += lgeMap[item.date].dollars || 0;
+            });
+
+            return {
+                overlapCount, hvacKwh, hvacCost, lgeKwh, lgeCost,
+                nonHvacKwh: Math.max(0, lgeKwh - hvacKwh),
+                nonHvacCost: Math.max(0, lgeCost - hvacCost),
+                hvacPct: lgeKwh > 0 ? (hvacKwh / lgeKwh * 100) : 0
+            };
+        }
+
+        // ── URL parameters & init ──────────────────────────────────────
 
         // Get URL parameters
         function getUrlParams() {
